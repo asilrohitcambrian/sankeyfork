@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import Link from "next/link";
+import { scaleOrdinal, schemeTableau10 } from 'd3-scale';
 
 // shadcn/ui components
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,16 @@ export default function BuilderPage() {
   // file upload refs & drag state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  const colourScale = useMemo(
+    () =>
+      scaleOrdinal<string>()
+        .domain(flows.flatMap(f => [f.source.trim(), f.target.trim()]))
+        .range(schemeTableau10),
+    [flows]
+  );
+
+  const rowsToColour = (name: string) => colourScale(name.trim().toLowerCase());
 
   // row CRUD helpers
   const addFlow = () => setFlows([...flows, emptyFlow()]);
@@ -199,15 +210,22 @@ export default function BuilderPage() {
 
                   {/* column headers */}
                   <div className="grid grid-cols-12 gap-4 font-medium text-[#42526E]">
+                    <div className="col-span-1">Colour</div>
                     <div className="col-span-5">Source</div>
                     <div className="col-span-5">Target</div>
-                    <div className="col-span-2">Value</div>
+                    <div className="col-span-1">Value</div>
                   </div>
 
                   {/* rows */}
                   <div className="space-y-3">
                     {flows.map(flow => (
                       <div key={flow.id} className="grid grid-cols-12 gap-4">
+                        <div className="col-span-1 flex items-center">
+                          <div
+                            className="h-4 w-4 rounded-sm border"
+                            style={{ background: rowsToColour(flow.source) }}
+                          />
+                        </div>
                         <Input className="col-span-5 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Solar" value={flow.source} onChange={e => updateFlow(flow.id, "source", e.target.value)} />
                         <Input className="col-span-5 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Electricity" value={flow.target} onChange={e => updateFlow(flow.id, "target", e.target.value)} />
                         <Input className="col-span-1 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" type="number" min="0" step="1" placeholder="e.g. 50" value={flow.value} onChange={e => updateFlow(flow.id, "value", e.target.value)} />

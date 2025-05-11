@@ -1,3 +1,11 @@
+import './globals.css';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Sankey Diagram Builder',
+  description: 'Create beautiful Sankey diagrams',
+};
+
 export default function RootLayout({
   children,
 }: {
