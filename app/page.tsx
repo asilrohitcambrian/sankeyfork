@@ -20,13 +20,14 @@ import { Plus, Edit, Eye, Trash2, MoreHorizontal, MoreVertical, Pencil } from "l
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { FlowRow } from '@/lib/rowsToSankey'
+import { supabase } from "@/lib/supabase"
 
 // Type for diagram metadata
 interface DiagramMetadata {
   id: string
   name: string
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 // Type for diagram data
@@ -40,74 +41,83 @@ export default function HomePage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [newDiagramName, setNewDiagramName] = useState("")
   const [error, setError] = useState<string | null>(null)
+  const [isCreating, setIsCreating] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Load diagrams from localStorage
+  // Load diagrams from Supabase
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("sankeyDiagrams")
-      if (stored) {
-        const parsedDiagrams = JSON.parse(stored) as DiagramMetadata[]
-        setDiagrams(parsedDiagrams)
-      }
-    } catch (err) {
-      console.error("Failed to load diagrams:", err)
-      setError("Failed to load saved diagrams")
-    }
+    loadDiagrams()
   }, [])
 
-  const createNewDiagram = () => {
+  const loadDiagrams = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('diagrams')
+        .select('id, name, created_at, updated_at')
+        .order('created_at', { ascending: false })
+
+      if (error) throw error
+      setDiagrams(data || [])
+    } catch (err) {
+      console.error('Error loading diagrams:', err)
+      setError('Failed to load diagrams')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const createDiagram = async () => {
     if (!newDiagramName.trim()) {
       setError("Please enter a diagram name")
       return
     }
 
     try {
-      const newDiagram: DiagramMetadata = {
-        id: crypto.randomUUID(),
-        name: newDiagramName.trim(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      const { data, error } = await supabase
+        .from('diagrams')
+        .insert({
+          name: newDiagramName.trim(),
+          data_json: { flows: [{ id: crypto.randomUUID(), source: '', target: '', value: '' }] },
+        })
+        .select('id')
+        .single()
+
+      if (error) {
+        setError(error.message)
+        return
       }
 
-      // Create initial empty diagram data
-      const initialDiagramData: DiagramData = {
-        flows: [{
-          id: crypto.randomUUID(),
-          source: "",
-          target: "",
-          value: "",
-        }]
-      }
-
-      // Save both metadata and initial data
-      const updatedDiagrams = [...diagrams, newDiagram]
-      localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
-      localStorage.setItem(`sankeyDiagram_${newDiagram.id}`, JSON.stringify(initialDiagramData))
-      
-      setDiagrams(updatedDiagrams)
-
-      // Reset form and close dialog
       setNewDiagramName("")
-      setError(null)
-      setIsCreateDialogOpen(false)
-
-      // Navigate to the builder
-      router.push(`/builder/${newDiagram.id}`)
+      setIsCreating(false)
+      router.push(`/builder/${data.id}`)
     } catch (err) {
-      console.error("Failed to create diagram:", err)
-      setError("Failed to create new diagram")
+      console.error('Error creating diagram:', err)
+      setError('Failed to create diagram')
     }
   }
 
-  const deleteDiagram = (id: string) => {
+  const deleteDiagram = async (id: string) => {
     try {
-      const updatedDiagrams = diagrams.filter(d => d.id !== id)
-      localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
-      localStorage.removeItem(`sankeyDiagram_${id}`)
-      setDiagrams(updatedDiagrams)
+      // Delete flows first due to foreign key constraint
+      const { error: flowsError } = await supabase
+        .from('diagram_flows')
+        .delete()
+        .eq('diagram_id', id)
+
+      if (flowsError) throw flowsError
+
+      // Then delete the diagram
+      const { error } = await supabase
+        .from('diagrams')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      setDiagrams(diagrams.filter(d => d.id !== id))
     } catch (err) {
-      console.error("Failed to delete diagram:", err)
-      setError("Failed to delete diagram")
+      console.error('Error deleting diagram:', err)
+      setError('Failed to delete diagram')
     }
   }
 
@@ -117,6 +127,14 @@ export default function HomePage() {
       month: "short",
       day: "numeric",
     })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F4F5F7] flex items-center justify-center">
+        <p className="text-[#42526E]">Loading diagrams...</p>
+      </div>
+    )
   }
 
   return (
@@ -154,7 +172,7 @@ export default function HomePage() {
             <h2 className="text-2xl font-bold text-[#172B4D]">Your Diagrams</h2>
             <p className="text-[#42526E]">Create and manage your Sankey diagrams</p>
           </div>
-          <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <Dialog open={isCreating} onOpenChange={setIsCreating}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-[#0052CC] hover:bg-[#0747A6] text-white">
                 <Plus className="h-4 w-4" />
@@ -189,7 +207,7 @@ export default function HomePage() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    setIsCreateDialogOpen(false)
+                    setIsCreating(false)
                     setNewDiagramName("")
                     setError(null)
                   }}
@@ -197,7 +215,7 @@ export default function HomePage() {
                 >
                   Cancel
                 </Button>
-                <Button onClick={createNewDiagram} className="bg-[#0052CC] hover:bg-[#0747A6] text-white">
+                <Button onClick={createDiagram} className="bg-[#0052CC] hover:bg-[#0747A6] text-white">
                   Create
                 </Button>
               </DialogFooter>
@@ -216,7 +234,7 @@ export default function HomePage() {
                 Create your first Sankey diagram to visualize flows between nodes.
               </p>
               <Button
-                onClick={() => setIsCreateDialogOpen(true)}
+                onClick={() => setIsCreating(true)}
                 className="gap-2 bg-[#0052CC] hover:bg-[#0747A6] text-white"
               >
                 <Plus className="h-4 w-4" />
@@ -266,8 +284,8 @@ export default function HomePage() {
                 </CardHeader>
                 <CardContent className="pb-2">
                   <div className="text-sm text-[#6B778C]">
-                    <p>Created: {formatDate(diagram.createdAt)}</p>
-                    <p>Last modified: {formatDate(diagram.updatedAt)}</p>
+                    <p>Created: {formatDate(diagram.created_at)}</p>
+                    <p>Last modified: {formatDate(diagram.updated_at)}</p>
                   </div>
                 </CardContent>
                 <CardFooter className="flex justify-between pt-2">

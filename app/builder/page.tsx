@@ -5,6 +5,7 @@ import Link from "next/link";
 import { scaleOrdinal } from 'd3-scale';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 // shadcn/ui components
 import { Button } from "@/components/ui/button";
@@ -31,8 +32,8 @@ type InputMode = 'pair' | 'path'
 interface DiagramMetadata {
   id: string
   name: string
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 interface DiagramData {
@@ -86,8 +87,24 @@ export default function BuilderPage({ diagramId }: { diagramId?: string }) {
   const removeFlow = (id: string) => {
     setFlows(flows.filter(flow => flow.id !== id));
   };
-  const updateFlow = (id: string, field: keyof FlowRow, value: string) => {
-    setFlows(flows.map(flow => (flow.id === id ? { ...flow, [field]: value } : flow)));
+  const updateFlow = async (id: string, field: keyof FlowRow, value: string) => {
+    const updatedFlows = flows.map(flow => (flow.id === id ? { ...flow, [field]: value } : flow))
+    setFlows(updatedFlows)
+
+    try {
+      const { error } = await supabase
+        .from('diagrams')
+        .update({
+          data_json: { flows: updatedFlows },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', diagramId)
+
+      if (error) throw error
+    } catch (err) {
+      console.error('Error auto-saving diagram:', err)
+      setError('Failed to auto-save changes')
+    }
   };
 
   // CSV parsing helpers
@@ -267,32 +284,25 @@ export default function BuilderPage({ diagramId }: { diagramId?: string }) {
     return out
   }
 
-  // Load existing diagram data if diagramId is provided
+  // Load existing diagram data
   useEffect(() => {
-    if (!diagramId) {
-      // If no diagramId, create a new empty flow
-      setFlows([{
-        id: crypto.randomUUID(),
-        source: "",
-        target: "",
-        value: "",
-      }])
-      setIsLoading(false)
-      return
-    }
+    (async () => {
+      const { data, error } = await supabase
+        .from('diagrams')
+        .select('data_json')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
 
-    try {
-      const stored = localStorage.getItem(`sankeyDiagram_${diagramId}`)
-      if (stored) {
-        const { flows } = JSON.parse(stored) as DiagramData
-        setFlows(flows.length > 0 ? flows : [{
-          id: crypto.randomUUID(),
-          source: "",
-          target: "",
-          value: "",
-        }])
+      if (error) {
+        console.error(error)
+        setError('Failed to load diagram data')
+        return
+      }
+
+      if (data?.data_json?.flows) {
+        setFlows(data.data_json.flows)
       } else {
-        // If no stored data, create a new empty flow
         setFlows([{
           id: crypto.randomUUID(),
           source: "",
@@ -300,70 +310,29 @@ export default function BuilderPage({ diagramId }: { diagramId?: string }) {
           value: "",
         }])
       }
-    } catch (err) {
-      console.error("Failed to load diagram data:", err)
-      setError("Failed to load diagram data")
-    } finally {
       setIsLoading(false)
-    }
-  }, [diagramId])
+    })()
+  }, [])
 
-  // Save diagram data whenever flows change
-  useEffect(() => {
-    if (!diagramId) return
-
-    // Save flows data
-    const diagramData = { flows }
-    localStorage.setItem(`sankeyDiagram_${diagramId}`, JSON.stringify(diagramData))
-
-    // Update metadata
-    const storedDiagrams = localStorage.getItem("sankeyDiagrams")
-    if (storedDiagrams) {
-      const diagrams: DiagramMetadata[] = JSON.parse(storedDiagrams)
-      const updatedDiagrams = diagrams.map(diagram => {
-        if (diagram.id === diagramId) {
-          return {
-            ...diagram,
-            updatedAt: new Date().toISOString()
-          }
-        }
-        return diagram
-      })
-      localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
-    }
-  }, [flows, diagramId])
-
-  const saveDiagram = () => {
-    if (!diagramId) return
-
+  const saveDiagram = async () => {
     setSaveStatus("saving")
 
     try {
-      // Save flows data
-      const diagramData = { flows }
-      localStorage.setItem(`sankeyDiagram_${diagramId}`, JSON.stringify(diagramData))
-
-      // Update metadata
-      const storedDiagrams = localStorage.getItem("sankeyDiagrams")
-      if (storedDiagrams) {
-        const diagrams: DiagramMetadata[] = JSON.parse(storedDiagrams)
-        const updatedDiagrams = diagrams.map(diagram => {
-          if (diagram.id === diagramId) {
-            return {
-              ...diagram,
-              updatedAt: new Date().toISOString()
-            }
-          }
-          return diagram
+      const { error } = await supabase
+        .from('diagrams')
+        .update({
+          data_json: { flows },
+          updated_at: new Date().toISOString()
         })
-        localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
-      }
+        .eq('id', diagramId)
+
+      if (error) throw error
 
       setSaveStatus("saved")
       setTimeout(() => setSaveStatus("idle"), 2000)
     } catch (err) {
-      console.error("Failed to save diagram:", err)
-      setError("Failed to save diagram")
+      console.error('Error saving diagram:', err)
+      setError('Failed to save diagram')
       setSaveStatus("idle")
     }
   }

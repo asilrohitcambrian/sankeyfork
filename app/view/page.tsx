@@ -4,63 +4,41 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useRouter } from "next/navigation"
+import { SankeyDiagram } from "@/components/sankey-diagram"
+import { rowsToSankey } from "@/lib/rowsToSankey"
+import { supabase } from "@/lib/supabase"
 
-interface Flow {
-  id: string
-  source: string
-  target: string
-  value: string
-}
-
-export default function ViewPage({ diagramId }: { diagramId?: string }) {
+export default function ViewPage() {
   const router = useRouter()
-  const [flows, setFlows] = useState<Flow[]>([])
+  const [diagramData, setDiagramData] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Load diagram data
   useEffect(() => {
-    if (!diagramId) {
-      setError("No diagram ID provided")
-      return
-    }
+    (async () => {
+      const { data, error } = await supabase
+        .from('diagrams')
+        .select('data_json')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
 
-    const stored = localStorage.getItem(`sankeyDiagram_${diagramId}`)
-    if (!stored) {
-      setError("Diagram not found")
-      return
-    }
+      if (error) {
+        console.error(error)
+        setError('Failed to load diagram data')
+        return
+      }
 
-    try {
-      const { flows } = JSON.parse(stored)
-      setFlows(flows)
-    } catch (err) {
-      setError("Failed to load diagram data")
-      console.error(err)
-    }
-  }, [diagramId])
+      const graph = rowsToSankey(data.data_json.flows)
+      setDiagramData(graph)
+      setIsLoading(false)
+    })()
+  }, [])
 
-  const rowsToColour = (name: string) => {
-    const hash = name.split("").reduce((a, b) => {
-      a = (a << 5) - a + b.charCodeAt(0)
-      return a & a
-    }, 0)
-    return `hsl(${hash % 360}, 70%, 50%)`
-  }
-
-  if (error) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-[#F4F5F7] flex items-center justify-center">
-        <div className="max-w-md w-full p-6">
-          <Alert variant="destructive" className="bg-[#FFEBE6] text-[#DE350B] border-[#FF8F73]">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-          <Button
-            onClick={() => router.push("/")}
-            className="mt-4 w-full bg-[#0052CC] hover:bg-[#0747A6] text-white"
-          >
-            Return to Home
-          </Button>
-        </div>
+        <p className="text-[#42526E]">Loading diagram...</p>
       </div>
     )
   }
@@ -69,48 +47,36 @@ export default function ViewPage({ diagramId }: { diagramId?: string }) {
     <div className="min-h-screen bg-[#F4F5F7]">
       <header className="border-b bg-white">
         <div className="container mx-auto py-4">
-          <h1 className="text-xl font-semibold text-[#172B4D]">Sankey Diagram Viewer</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-semibold text-[#172B4D]">Sankey Diagram Viewer</h1>
+            <Button
+              variant="ghost"
+              onClick={() => router.push("/")}
+              className="text-[#42526E] hover:text-[#172B4D]"
+            >
+              Back to Home
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-[#172B4D]">View Diagram</h2>
-          <p className="text-[#42526E]">View your Sankey diagram flows</p>
-        </div>
+        {error && (
+          <Alert variant="destructive" className="mb-6 bg-[#FFEBE6] text-[#DE350B] border-[#FF8F73]">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
-        <div className="space-y-6">
-          {/* column headers */}
-          <div
-            className="grid gap-4 font-medium text-[#42526E] sm:grid-cols-1"
-            style={{ gridTemplateColumns: '20px 1fr 1fr 120px' }}
-          >
-            <div /> <div>Source</div> <div>Target</div> <div>Value</div>
+        {diagramData ? (
+          <div className="bg-white p-6 rounded-lg shadow-sm">
+            <SankeyDiagram data={diagramData} />
           </div>
-
-          {/* rows */}
-          <div className="space-y-3">
-            {flows.map(flow => (
-              <div
-                key={flow.id}
-                className="grid gap-4 items-center sm:grid-cols-1 bg-white p-4 rounded-lg border border-[#DFE1E6]"
-                style={{ gridTemplateColumns: '20px 1fr 1fr 120px' }}
-              >
-                <div className="h-3 w-3 rounded-sm border" style={{ background: rowsToColour(flow.source) }} />
-                <div className="text-[#172B4D]">{flow.source}</div>
-                <div className="text-[#172B4D]">{flow.target}</div>
-                <div className="text-[#172B4D]">{flow.value}</div>
-              </div>
-            ))}
+        ) : (
+          <div className="text-center py-12">
+            <h2 className="text-xl font-semibold text-[#172B4D] mb-2">No diagram data found</h2>
+            <p className="text-[#42526E]">Create a new diagram to get started.</p>
           </div>
-
-          <Button
-            onClick={() => router.push(`/builder/${diagramId}`)}
-            className="bg-[#0052CC] hover:bg-[#0747A6] text-white"
-          >
-            Edit Diagram
-          </Button>
-        </div>
+        )}
       </main>
     </div>
   )
