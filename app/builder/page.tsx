@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { scaleOrdinal } from 'd3-scale';
 import { schemeTableau10 } from 'd3-scale-chromatic';
+import { useRouter } from "next/navigation";
 
 // shadcn/ui components
 import { Button } from "@/components/ui/button";
@@ -17,35 +18,38 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { SankeyDiagram } from "@/components/sankey-diagram";
 
 // icons
-import { ChevronLeft, Download, FileText, Info, Plus, Trash2, Upload, ArrowRight } from "lucide-react";
+import { ChevronLeft, Download, FileText, Info, Plus, Trash2, Upload, ArrowRight, Save } from "lucide-react";
 
 // Types for flow data
-type Flow = {
-  id: string;
-  source: string;
-  target: string;
-  value: string;
-};
-
-// helper to create an empty flow row
-const emptyFlow = (): Flow => ({
-  id: crypto.randomUUID(),
-  source: "",
-  target: "",
-  value: "",
-});
+import { FlowRow } from '@/lib/rowsToSankey';
 
 // example CSV for users to download
 const exampleCsvData = `source,target,value\nSolar,Electricity,42\nWind,Electricity,35\nCoal,Heat,50\nCoal,Electricity,30\nGas,Heat,20\nGas,Electricity,15\nElectricity,Residential,40\nElectricity,Commercial,50\nElectricity,Industrial,32\nHeat,Residential,30\nHeat,Commercial,20\nHeat,Industrial,20`;
 
-export default function BuilderPage() {
+type InputMode = 'pair' | 'path'
+
+interface DiagramMetadata {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+interface DiagramData {
+  flows: FlowRow[]
+}
+
+export default function BuilderPage({ diagramId }: { diagramId?: string }) {
+  const router = useRouter()
   // state hooks
-  const [flows, setFlows] = useState<Flow[]>([emptyFlow()]);
+  const [flows, setFlows] = useState<FlowRow[]>([]);
   const [diagramData, setDiagramData] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("input");
+  const [inputMode, setInputMode] = useState<InputMode>('pair');
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   // file upload refs & drag state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -59,31 +63,77 @@ export default function BuilderPage() {
     [flows]
   );
 
-  const rowsToColour = (name: string) => colourScale(name.trim().toLowerCase());
+  const rowsToColour = (name: string) => {
+    const hash = name.split("").reduce((a, b) => {
+      a = (a << 5) - a + b.charCodeAt(0)
+      return a & a
+    }, 0)
+    return `hsl(${hash % 360}, 70%, 50%)`
+  }
 
   // row CRUD helpers
-  const addFlow = () => setFlows([...flows, emptyFlow()]);
-  const removeFlow = (id: string) => setFlows(flows.filter(f => f.id !== id));
-  const updateFlow = (id: string, field: keyof Flow, val: string) =>
-    setFlows(flows.map(f => (f.id === id ? { ...f, [field]: val } : f)));
-
-  // CSV parsing & upload handling
-  const parseCsvToFlows = (csv: string): Flow[] => {
-    const lines = csv.split("\n");
-    const start = lines[0].toLowerCase().includes("source") ? 1 : 0;
-    const parsed: Flow[] = [];
-    for (let i = start; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      const [source, target, value] = line.split(",").map(s => s.trim());
-      if (!source || !target || !value) throw new Error("CSV format incorrect");
-      parsed.push({ id: crypto.randomUUID(), source, target, value });
-    }
-    return parsed;
+  const addFlow = () => {
+    setFlows([
+      ...flows,
+      {
+        id: crypto.randomUUID(),
+        source: "",
+        target: "",
+        value: "",
+      },
+    ]);
+  };
+  const removeFlow = (id: string) => {
+    setFlows(flows.filter(flow => flow.id !== id));
+  };
+  const updateFlow = (id: string, field: keyof FlowRow, value: string) => {
+    setFlows(flows.map(flow => (flow.id === id ? { ...flow, [field]: value } : flow)));
   };
 
-  const handleFileSelect = (file: File) => {
-    if (!file) return;
+  // CSV parsing helpers
+  const parseCsvToPairRows = (csv: string): FlowRow[] => {
+    const lines = csv.split("\n");
+    const headers = lines[0].toLowerCase().split(",");
+    if (!headers.includes("source") || !headers.includes("target") || !headers.includes("value")) {
+      throw new Error("CSV must have source, target, and value columns");
+    }
+    return lines.slice(1)
+      .filter(line => line.trim())
+      .map(line => {
+        const values = line.split(",");
+        return {
+          id: crypto.randomUUID(),
+          source: values[headers.indexOf("source")]?.trim() || "",
+          target: values[headers.indexOf("target")]?.trim() || "",
+          value: values[headers.indexOf("value")]?.trim() || ""
+        };
+      });
+  };
+
+  const parseCsvToPathRows = (csv: string): FlowRow[] => {
+    const lines = csv.split("\n");
+    const headers = lines[0].toLowerCase().split(",");
+    if (!headers.includes("path") || !headers.includes("value")) {
+      throw new Error("CSV must have path and value columns");
+    }
+    return lines.slice(1)
+      .filter(line => line.trim())
+      .map(line => {
+        const values = line.split(",");
+        return {
+          id: crypto.randomUUID(),
+          source: values[headers.indexOf("path")]?.trim() || "",
+          target: "",
+          value: values[headers.indexOf("value")]?.trim() || ""
+        };
+      });
+  };
+
+  // CSV parsing & upload handling
+  const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
     if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
       setUploadError("Please upload a CSV file.");
       return;
@@ -92,20 +142,23 @@ export default function BuilderPage() {
     reader.onload = e => {
       try {
         const csv = e.target?.result as string;
-        const parsed = parseCsvToFlows(csv);
-        if (!parsed.length) {
-          setUploadError("No valid data found in CSV file.");
-          return;
+        if (csv.toLowerCase().startsWith('path,')) {
+          setInputMode('path');
+          const parsed = parseCsvToPathRows(csv);
+          setFlows(parsed);
+        } else {
+          setInputMode('pair');
+          const parsed = parseCsvToPairRows(csv);
+          setFlows(parsed);
         }
         setUploadError(null);
-        setFlows(parsed);
       } catch (err) {
         console.error(err);
         setUploadError("Failed to parse CSV file. Please check the format.");
       }
     };
     reader.readAsText(file);
-  };
+  }, []);
 
   // drag‑and‑drop helpers
   const handleDragOver = (e: React.DragEvent) => {
@@ -117,7 +170,26 @@ export default function BuilderPage() {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer.files[0];
-    handleFileSelect(file);
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const csv = ev.target?.result as string;
+        if (csv.toLowerCase().startsWith('path,')) {
+          setInputMode('path');
+          const parsed = parseCsvToPathRows(csv);
+          setFlows(parsed);
+        } else {
+          setInputMode('pair');
+          const parsed = parseCsvToPairRows(csv);
+          setFlows(parsed);
+        }
+        setUploadError(null);
+      } catch (err) {
+        setUploadError("Failed to parse CSV file. Please check the format.");
+      }
+    };
+    reader.readAsText(file);
   };
 
   // validation
@@ -135,12 +207,16 @@ export default function BuilderPage() {
   };
 
   // preview generation (mock backend for now)
-  const generateDiagram = async () => {
+  const generateDiagram = useCallback(async () => {
     if (!validateFlows()) return;
     setIsLoading(true);
     try {
       await new Promise(res => setTimeout(res, 500));
-      const nodeNames = Array.from(new Set(flows.flatMap(f => [f.source, f.target])));
+      const rawFlows = inputMode === 'pair' 
+        ? flows 
+        : flows.flatMap(f => explodePath(f.source, Number(f.value)));
+
+      const nodeNames = Array.from(new Set(rawFlows.flatMap(f => [f.source, f.target])));
       const colourScale = scaleOrdinal<string>()
         .domain(nodeNames)
         .range(schemeTableau10);
@@ -150,7 +226,7 @@ export default function BuilderPage() {
         colour: colourScale(name)
       }));
 
-      const links = flows.map(flow => ({
+      const links = rawFlows.map(flow => ({
         source: nodes.findIndex(n => n.name === flow.source),
         target: nodes.findIndex(n => n.name === flow.target),
         value: Number(flow.value),
@@ -165,7 +241,7 @@ export default function BuilderPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [flows, inputMode]);
 
   // download example CSV
   const downloadExampleCsv = () => {
@@ -177,15 +253,152 @@ export default function BuilderPage() {
 
   const exportAsPng = () => alert("Export as PNG coming soon 🙌");
 
+  function explodePath(path: string, value: number): FlowRow[] {
+    const nodes = path.split(',').map(s => s.trim()).filter(Boolean)
+    const out: FlowRow[] = []
+    for (let i = 0; i < nodes.length - 1; i++) {
+      out.push({
+        id: crypto.randomUUID(),
+        source: nodes[i],
+        target: nodes[i + 1],
+        value: String(value),
+      })
+    }
+    return out
+  }
+
+  // Load existing diagram data if diagramId is provided
+  useEffect(() => {
+    if (!diagramId) {
+      // If no diagramId, create a new empty flow
+      setFlows([{
+        id: crypto.randomUUID(),
+        source: "",
+        target: "",
+        value: "",
+      }])
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      const stored = localStorage.getItem(`sankeyDiagram_${diagramId}`)
+      if (stored) {
+        const { flows } = JSON.parse(stored) as DiagramData
+        setFlows(flows.length > 0 ? flows : [{
+          id: crypto.randomUUID(),
+          source: "",
+          target: "",
+          value: "",
+        }])
+      } else {
+        // If no stored data, create a new empty flow
+        setFlows([{
+          id: crypto.randomUUID(),
+          source: "",
+          target: "",
+          value: "",
+        }])
+      }
+    } catch (err) {
+      console.error("Failed to load diagram data:", err)
+      setError("Failed to load diagram data")
+    } finally {
+      setIsLoading(false)
+    }
+  }, [diagramId])
+
+  // Save diagram data whenever flows change
+  useEffect(() => {
+    if (!diagramId) return
+
+    // Save flows data
+    const diagramData = { flows }
+    localStorage.setItem(`sankeyDiagram_${diagramId}`, JSON.stringify(diagramData))
+
+    // Update metadata
+    const storedDiagrams = localStorage.getItem("sankeyDiagrams")
+    if (storedDiagrams) {
+      const diagrams: DiagramMetadata[] = JSON.parse(storedDiagrams)
+      const updatedDiagrams = diagrams.map(diagram => {
+        if (diagram.id === diagramId) {
+          return {
+            ...diagram,
+            updatedAt: new Date().toISOString()
+          }
+        }
+        return diagram
+      })
+      localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
+    }
+  }, [flows, diagramId])
+
+  const saveDiagram = () => {
+    if (!diagramId) return
+
+    setSaveStatus("saving")
+
+    try {
+      // Save flows data
+      const diagramData = { flows }
+      localStorage.setItem(`sankeyDiagram_${diagramId}`, JSON.stringify(diagramData))
+
+      // Update metadata
+      const storedDiagrams = localStorage.getItem("sankeyDiagrams")
+      if (storedDiagrams) {
+        const diagrams: DiagramMetadata[] = JSON.parse(storedDiagrams)
+        const updatedDiagrams = diagrams.map(diagram => {
+          if (diagram.id === diagramId) {
+            return {
+              ...diagram,
+              updatedAt: new Date().toISOString()
+            }
+          }
+          return diagram
+        })
+        localStorage.setItem("sankeyDiagrams", JSON.stringify(updatedDiagrams))
+      }
+
+      setSaveStatus("saved")
+      setTimeout(() => setSaveStatus("idle"), 2000)
+    } catch (err) {
+      console.error("Failed to save diagram:", err)
+      setError("Failed to save diagram")
+      setSaveStatus("idle")
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F4F5F7] flex items-center justify-center">
+        <p className="text-[#42526E]">Loading diagram...</p>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-[#F4F5F7]">
       {/* header */}
       <header className="border-b bg-white">
         <div className="container mx-auto py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2 text-[#42526E] hover:text-[#172B4D]">
-              <ChevronLeft className="h-4 w-4" /> Back to Home
-            </Link>
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                onClick={() => router.push("/")}
+                className="text-[#42526E] hover:text-[#172B4D]"
+              >
+                Back to Home
+              </Button>
+              <Button
+                onClick={saveDiagram}
+                className="bg-[#0052CC] hover:bg-[#0747A6] text-white"
+                disabled={saveStatus === "saving"}
+              >
+                <Save className="mr-2 h-4 w-4" />
+                {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved!" : "Save Changes"}
+              </Button>
+            </div>
             <h1 className="text-xl font-semibold text-[#172B4D]">Sankey Diagram Builder</h1>
             <Link href="/help" className="text-[#42526E] hover:text-[#172B4D]">Help</Link>
           </div>
@@ -222,14 +435,10 @@ export default function BuilderPage() {
 
                   {/* column headers */}
                   <div
-                    className="grid gap-4 font-medium text-[#42526E]"
+                    className="grid gap-4 font-medium text-[#42526E] sm:grid-cols-1"
                     style={{ gridTemplateColumns: '20px 1fr 1fr 120px 40px' }}
                   >
-                    <div />                 {/* empty header over swatch */}
-                    <div>Source</div>
-                    <div>Target</div>
-                    <div>Value</div>
-                    <div />                 {/* empty over trash */}
+                    <div /> <div>Source</div> <div>Target</div> <div>Value</div> <div />
                   </div>
 
                   {/* rows */}
@@ -237,47 +446,32 @@ export default function BuilderPage() {
                     {flows.map(flow => (
                       <div
                         key={flow.id}
-                        className="grid gap-4 items-center"
+                        className="grid gap-4 items-center sm:grid-cols-1"
                         style={{ gridTemplateColumns: '20px 1fr 1fr 120px 40px' }}
                       >
-                        {/* colour swatch */}
                         <div className="h-3 w-3 rounded-sm border" style={{ background: rowsToColour(flow.source) }} />
-
-                        {/* Source */}
                         <Input
-                          placeholder="e.g. Solar"
+                          placeholder="Source"
                           value={flow.source}
                           onChange={e => updateFlow(flow.id, 'source', e.target.value)}
-                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
                         />
-
-                        {/* Target */}
                         <Input
-                          placeholder="e.g. Electricity"
+                          placeholder="Target"
                           value={flow.target}
                           onChange={e => updateFlow(flow.id, 'target', e.target.value)}
-                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
                         />
-
-                        {/* Value */}
                         <Input
                           type="number"
                           min="0"
                           step="1"
-                          placeholder="e.g. 50"
+                          placeholder="Value"
                           value={flow.value}
                           onChange={e => updateFlow(flow.id, 'value', e.target.value)}
-                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
                         />
-
-                        {/* delete */}
                         <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => removeFlow(flow.id)}
-                          disabled={flows.length === 1}
-                          aria-label="Remove flow"
-                          className="text-[#6B778C] hover:text-[#172B4D] hover:bg-[#F4F5F7]"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -286,7 +480,13 @@ export default function BuilderPage() {
                   </div>
 
                   {/* add row */}
-                  <Button variant="outline" size="sm" onClick={addFlow} className="gap-2 border-[#DFE1E6] text-[#42526E] hover:bg-[#F4F5F7]"><Plus className="h-4 w-4" />Add another flow</Button>
+                  <Button
+                    onClick={addFlow}
+                    className="gap-2 bg-[#0052CC] hover:bg-[#0747A6] text-white"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Flow
+                  </Button>
 
                   {/* CSV upload */}
                   <div className="rounded-md border border-[#DFE1E6] p-4 bg-[#FAFBFC]">
@@ -298,7 +498,7 @@ export default function BuilderPage() {
                       </div>
                       <div className="space-y-2">
                         <div className={`flex cursor-pointer flex-col items-center justify-center rounded-md border-2 border-dashed p-4 transition-colors ${isDragging ? "border-[#4C9AFF] bg-[#DEEBFF]" : "border-[#DFE1E6]"}`} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop} onClick={() => fileInputRef.current?.click()}>
-                          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={e => e.target.files && handleFileSelect(e.target.files[0])} />
+                          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFileSelect} />
                           <Upload className="mb-2 h-6 w-6 text-[#6B778C]" />
                           <p className="text-sm text-[#6B778C]">Drag & drop CSV or click to select</p>
                         </div>
@@ -310,7 +510,12 @@ export default function BuilderPage() {
               </CardContent>
             </Card>
 
-            <div className="flex justify-end"><Button onClick={generateDiagram} disabled={isLoading || !flows.length} className="gap-2 bg-[#0052CC] hover:bg-[#0747A6] text-white">{isLoading ? "Generating..." : "Preview Diagram"}{!isLoading && <ArrowRight className="h-4 w-4" />}</Button></div>
+            <div className="flex justify-end">
+              <Button onClick={generateDiagram} disabled={isLoading || !flows.length} className="gap-2 bg-[#0052CC] hover:bg-[#0747A6] text-white">
+                {isLoading ? "Generating..." : "Preview Diagram"}
+                {!isLoading && <ArrowRight className="h-4 w-4" />}
+              </Button>
+            </div>
           </TabsContent>
 
           {/* preview tab */}
@@ -320,12 +525,24 @@ export default function BuilderPage() {
                 <Card className="border-[#DFE1E6]">
                   <CardContent className="pt-6">
                     <div className="space-y-4">
-                      <div className="flex items-center justify-between"><h2 className="text-xl font-semibold text-[#172B4D]">Sankey Diagram Preview</h2><Button variant="outline" onClick={exportAsPng} className="gap-2 border-[#DFE1E6] text-[#42526E] hover:bg-[#F4F5F7]"><Download className="h-4 w-4" />Export as PNG</Button></div>
-                      <div className="overflow-x-auto rounded-md border border-[#DFE1E6] bg-white p-4"><SankeyDiagram data={diagramData} /></div>
+                      <div className="flex items-center justify-between">
+                        <h2 className="text-xl font-semibold text-[#172B4D]">Sankey Diagram Preview</h2>
+                        <Button variant="outline" onClick={exportAsPng} className="gap-2 border-[#DFE1E6] text-[#42526E] hover:bg-[#F4F5F7]">
+                          <Download className="h-4 w-4" />
+                          Export as PNG
+                        </Button>
+                      </div>
+                      <div className="overflow-x-auto rounded-md border border-[#DFE1E6] bg-white p-4">
+                        <SankeyDiagram data={diagramData} />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
-                <div className="flex justify-between"><Button variant="outline" onClick={() => setActiveTab("input")} className="border-[#DFE1E6] text-[#42526E] hover:bg-[#F4F5F7]">Edit Data</Button></div>
+                <div className="flex justify-between">
+                  <Button variant="outline" onClick={() => setActiveTab("input")} className="border-[#DFE1E6] text-[#42526E] hover:bg-[#F4F5F7]">
+                    Edit Data
+                  </Button>
+                </div>
               </>
             )}
           </TabsContent>
@@ -334,7 +551,13 @@ export default function BuilderPage() {
 
       {/* footer */}
       <footer className="border-t bg-white py-6 mt-8">
-        <div className="container mx-auto px-4 flex flex-col items-center gap-4 md:flex-row md:justify-between"><p className="text-sm text-[#6B778C]">© {new Date().getFullYear()} Sankey Diagram Builder</p><div className="flex gap-4"><Link href="/privacy" className="text-sm text-[#6B778C] hover:text-[#172B4D]">Privacy Policy</Link><Link href="/terms" className="text-sm text-[#6B778C] hover:text-[#172B4D]">Terms of Service</Link></div></div>
+        <div className="container mx-auto px-4 flex flex-col items-center gap-4 md:flex-row md:justify-between">
+          <p className="text-sm text-[#6B778C]">© {new Date().getFullYear()} Sankey Diagram Builder</p>
+          <div className="flex gap-4">
+            <Link href="/privacy" className="text-sm text-[#6B778C] hover:text-[#172B4D]">Privacy Policy</Link>
+            <Link href="/terms" className="text-sm text-[#6B778C] hover:text-[#172B4D]">Terms of Service</Link>
+          </div>
+        </div>
       </footer>
     </div>
   );
