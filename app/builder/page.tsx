@@ -221,32 +221,66 @@ export default function BuilderPage() {
                   {error && <Alert variant="destructive" className="bg-[#FFEBE6] text-[#DE350B] border-[#FF8F73]"><AlertDescription>{error}</AlertDescription></Alert>}
 
                   {/* column headers */}
-                  <div className="grid grid-cols-13 gap-4 font-medium text-[#42526E]">
-                    <div className="col-span-1">Colour</div>
-                    <div className="col-span-4">Source</div>
-                    <div className="col-span-5">Target</div>
-                    <div className="col-span-2">Value</div>
-                    <div className="col-span-1"></div>
+                  <div
+                    className="grid gap-4 font-medium text-[#42526E]"
+                    style={{ gridTemplateColumns: '20px 1fr 1fr 120px 40px' }}
+                  >
+                    <div />                 {/* empty header over swatch */}
+                    <div>Source</div>
+                    <div>Target</div>
+                    <div>Value</div>
+                    <div />                 {/* empty over trash */}
                   </div>
 
                   {/* rows */}
                   <div className="space-y-3">
                     {flows.map(flow => (
-                      <div key={flow.id} className="grid grid-cols-13 gap-4">
-                        <div className="col-span-1 flex items-center">
-                          <div
-                            className="h-4 w-4 rounded-sm border"
-                            style={{ background: rowsToColour(flow.source) }}
-                          />
-                        </div>
-                        <Input className="col-span-4 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Solar" value={flow.source} onChange={e => updateFlow(flow.id, "source", e.target.value)} />
-                        <Input className="col-span-5 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Electricity" value={flow.target} onChange={e => updateFlow(flow.id, "target", e.target.value)} />
-                        <Input className="col-span-2 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" type="number" min="0" step="1" placeholder="e.g. 50" value={flow.value} onChange={e => updateFlow(flow.id, "value", e.target.value)} />
-                        <div className="col-span-1 flex items-center">
-                          <Button variant="ghost" size="icon" onClick={() => removeFlow(flow.id)} disabled={flows.length === 1} className="text-[#6B778C] hover:text-[#172B4D] hover:bg-[#F4F5F7]">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                      <div
+                        key={flow.id}
+                        className="grid gap-4 items-center"
+                        style={{ gridTemplateColumns: '20px 1fr 1fr 120px 40px' }}
+                      >
+                        {/* colour swatch */}
+                        <div className="h-3 w-3 rounded-sm border" style={{ background: rowsToColour(flow.source) }} />
+
+                        {/* Source */}
+                        <Input
+                          placeholder="e.g. Solar"
+                          value={flow.source}
+                          onChange={e => updateFlow(flow.id, 'source', e.target.value)}
+                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
+                        />
+
+                        {/* Target */}
+                        <Input
+                          placeholder="e.g. Electricity"
+                          value={flow.target}
+                          onChange={e => updateFlow(flow.id, 'target', e.target.value)}
+                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
+                        />
+
+                        {/* Value */}
+                        <Input
+                          type="number"
+                          min="0"
+                          step="1"
+                          placeholder="e.g. 50"
+                          value={flow.value}
+                          onChange={e => updateFlow(flow.id, 'value', e.target.value)}
+                          className="border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]"
+                        />
+
+                        {/* delete */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeFlow(flow.id)}
+                          disabled={flows.length === 1}
+                          aria-label="Remove flow"
+                          className="text-[#6B778C] hover:text-[#172B4D] hover:bg-[#F4F5F7]"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     ))}
                   </div>
