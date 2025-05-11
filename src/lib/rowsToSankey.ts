@@ -1,4 +1,5 @@
-import { scaleOrdinal, schemeTableau10 } from 'd3-scale';
+import { scaleOrdinal } from 'd3-scale';
+import { schemeTableau10 } from 'd3-scale-chromatic';
 import type { SankeyNode, SankeyLink } from 'd3-sankey';
 
 export type FlowRow = { id: string; source: string; target: string; value: string };

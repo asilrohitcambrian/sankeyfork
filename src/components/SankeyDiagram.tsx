@@ -6,7 +6,7 @@ import * as d3 from 'd3';
 import type { SankeyGraph, SankeyNode, SankeyLink } from 'd3-sankey';
 
 interface Props {
-  data: SankeyGraph<{ name: string }, { value: number }>;
+  data: SankeyGraph<{ name: string; colour: string }, { value: number; colour: string }>;
   width?: number;
   height?: number;
 }
@@ -19,7 +19,7 @@ export default function SankeyDiagram({ data, width = 700, height = 400 }: Props
     const svg = d3.select(ref.current);
     svg.selectAll('*').remove();
 
-    const { nodes, links } = d3sankey<{ name: string }, { value: number }>()
+    const { nodes, links } = d3sankey<{ name: string; colour: string }, { value: number; colour: string }>()
       .nodeWidth(15)
       .nodePadding(10)
       .extent([[0, 0], [width, height]])(data);
@@ -35,8 +35,8 @@ export default function SankeyDiagram({ data, width = 700, height = 400 }: Props
       .attr('stroke-width', d => Math.max(1, d.width!))
       .append('title')
       .text(d => {
-        const source = d.source as SankeyNode<{ name: string }, { value: number }>;
-        const target = d.target as SankeyNode<{ name: string }, { value: number }>;
+        const source = d.source as SankeyNode<{ name: string; colour: string }, { value: number; colour: string }>;
+        const target = d.target as SankeyNode<{ name: string; colour: string }, { value: number; colour: string }>;
         return `${source.name} → ${target.name}\n${d.value}`;
       });
 

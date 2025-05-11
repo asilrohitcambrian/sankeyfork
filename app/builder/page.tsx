@@ -2,7 +2,8 @@
 
 import { useState, useRef, useMemo } from "react";
 import Link from "next/link";
-import { scaleOrdinal, schemeTableau10 } from 'd3-scale';
+import { scaleOrdinal } from 'd3-scale';
+import { schemeTableau10 } from 'd3-scale-chromatic';
 
 // shadcn/ui components
 import { Button } from "@/components/ui/button";
@@ -139,12 +140,23 @@ export default function BuilderPage() {
     setIsLoading(true);
     try {
       await new Promise(res => setTimeout(res, 500));
-      const nodes = Array.from(new Set(flows.flatMap(f => [f.source, f.target]))).map(name => ({ name }));
+      const nodeNames = Array.from(new Set(flows.flatMap(f => [f.source, f.target])));
+      const colourScale = scaleOrdinal<string>()
+        .domain(nodeNames)
+        .range(schemeTableau10);
+
+      const nodes = nodeNames.map(name => ({ 
+        name,
+        colour: colourScale(name)
+      }));
+
       const links = flows.map(flow => ({
         source: nodes.findIndex(n => n.name === flow.source),
         target: nodes.findIndex(n => n.name === flow.target),
         value: Number(flow.value),
+        colour: colourScale(flow.source)
       }));
+
       setDiagramData({ nodes, links });
       setActiveTab("preview");
     } catch (err) {
@@ -209,27 +221,32 @@ export default function BuilderPage() {
                   {error && <Alert variant="destructive" className="bg-[#FFEBE6] text-[#DE350B] border-[#FF8F73]"><AlertDescription>{error}</AlertDescription></Alert>}
 
                   {/* column headers */}
-                  <div className="grid grid-cols-12 gap-4 font-medium text-[#42526E]">
+                  <div className="grid grid-cols-13 gap-4 font-medium text-[#42526E]">
                     <div className="col-span-1">Colour</div>
-                    <div className="col-span-5">Source</div>
+                    <div className="col-span-4">Source</div>
                     <div className="col-span-5">Target</div>
-                    <div className="col-span-1">Value</div>
+                    <div className="col-span-2">Value</div>
+                    <div className="col-span-1"></div>
                   </div>
 
                   {/* rows */}
                   <div className="space-y-3">
                     {flows.map(flow => (
-                      <div key={flow.id} className="grid grid-cols-12 gap-4">
+                      <div key={flow.id} className="grid grid-cols-13 gap-4">
                         <div className="col-span-1 flex items-center">
                           <div
                             className="h-4 w-4 rounded-sm border"
                             style={{ background: rowsToColour(flow.source) }}
                           />
                         </div>
-                        <Input className="col-span-5 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Solar" value={flow.source} onChange={e => updateFlow(flow.id, "source", e.target.value)} />
+                        <Input className="col-span-4 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Solar" value={flow.source} onChange={e => updateFlow(flow.id, "source", e.target.value)} />
                         <Input className="col-span-5 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" placeholder="e.g. Electricity" value={flow.target} onChange={e => updateFlow(flow.id, "target", e.target.value)} />
-                        <Input className="col-span-1 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" type="number" min="0" step="1" placeholder="e.g. 50" value={flow.value} onChange={e => updateFlow(flow.id, "value", e.target.value)} />
-                        <div className="col-span-1 flex items-center"><Button variant="ghost" size="icon" onClick={() => removeFlow(flow.id)} disabled={flows.length === 1} className="text-[#6B778C] hover:text-[#172B4D] hover:bg-[#F4F5F7]"><Trash2 className="h-4 w-4" /></Button></div>
+                        <Input className="col-span-2 border-[#DFE1E6] focus:border-[#4C9AFF] focus:ring-[#4C9AFF]" type="number" min="0" step="1" placeholder="e.g. 50" value={flow.value} onChange={e => updateFlow(flow.id, "value", e.target.value)} />
+                        <div className="col-span-1 flex items-center">
+                          <Button variant="ghost" size="icon" onClick={() => removeFlow(flow.id)} disabled={flows.length === 1} className="text-[#6B778C] hover:text-[#172B4D] hover:bg-[#F4F5F7]">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
